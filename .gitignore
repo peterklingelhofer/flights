@@ -1,0 +1,7 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# prices.db and snapshot_*.md are intentionally committed by the workflow

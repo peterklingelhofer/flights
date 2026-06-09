@@ -1,0 +1,59 @@
+name: Flight price tracker
+
+on:
+  schedule:
+    # Runs daily at ~13:17 UTC. GitHub may delay scheduled runs under load.
+    # Add more lines to check more often, e.g. a second run at '17 1 * * *'.
+    - cron: '17 13 * * *'
+  workflow_dispatch: {}        # lets you trigger a run manually from the Actions tab
+
+permissions:
+  contents: write              # needed so the job can commit prices.db back
+  issues: write                # needed so the job can open fare-alert issues
+
+concurrency:
+  group: flight-tracker
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tracker
+        env:
+          # GitHub-native alerts: opens an issue that @mentions you, so GitHub
+          # emails you. No SMTP creds required. GITHUB_REPOSITORY is auto-set.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Email (optional fallback). Leave unset to skip emailing.
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+          # Optional Telegram alternative.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # Optional tuning via repo Variables (Settings -> Secrets and variables -> Variables).
+          ABS_THRESHOLD: ${{ vars.ABS_THRESHOLD }}
+          HORIZON_DAYS: ${{ vars.HORIZON_DAYS }}
+          PCT_DROP: ${{ vars.PCT_DROP }}
+        run: python track_flights.py
+
+      - name: Commit price history
+        run: |
+          git config user.name  "flight-tracker-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add prices.db snapshot_*.md
+          # Only commit if something changed; never fail the job on "nothing to commit".
+          git diff --quiet --cached || git commit -m "prices: $(date -u +%Y-%m-%d)"
+          git push

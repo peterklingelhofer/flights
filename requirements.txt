@@ -1,0 +1,3 @@
+# The only dependency. PyPI package is "flights"; you import it as `fli`.
+# Pulls in httpx / pydantic / selectolax automatically.
+flights>=0.9.0
