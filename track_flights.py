@@ -80,7 +80,7 @@ DEFAULT_RET_WEEKDAYS = {6, 0}        # Sun, Mon
 DEFAULT_MIN_NIGHTS = 2
 DEFAULT_MAX_NIGHTS = 4
 
-DEFAULT_ABS_THRESHOLD = float(os.environ.get("ABS_THRESHOLD") or 180)
+DEFAULT_ABS_THRESHOLD = float(os.environ.get("ABS_THRESHOLD") or 250)
 PCT_DROP = float(os.environ.get("PCT_DROP") or 0.20)
 HORIZON_DAYS = int(os.environ.get("HORIZON_DAYS") or 330)
 
