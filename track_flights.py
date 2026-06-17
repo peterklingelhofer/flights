@@ -207,6 +207,18 @@ def kayak_link(o, d, out_date, ret_date):
     return f"https://www.kayak.com/flights/{o}-{d}/{out_date}/{ret_date}?fs=stops=0"
 
 
+def google_flights_link(o, d, out_date, ret_date):
+    """Filtered Google Flights search for this nonstop round-trip date-pair.
+
+    Matches the tracker's own data source, so it shows the same fares it
+    flagged (Southwest now included where it flies). It deep-links to the
+    search, not a single itinerary, which is the most a metasearch URL allows.
+    """
+    q = (f"Flights from {o} to {d} on {out_date} returning {ret_date} nonstop "
+         f"round trip")
+    return f"https://www.google.com/travel/flights?q={quote(q)}"
+
+
 def evaluate(price, pmin, plast, threshold):
     reasons = []
     new_low_floor = max(5.0, (pmin or 0) * 0.01)        # ignore trivial new lows
@@ -345,7 +357,8 @@ def process_watch(conn, w: Watch):
     rows_html = "".join(
         f"<tr><td>{a['out']} → {a['ret']}</td><td align='right'><b>${a['price']:.0f}</b></td>"
         f"<td>{a['airline']}</td><td>{'; '.join(a['reasons'])}</td>"
-        f"<td><a href='{kayak_link(w.origin.name, w.dest.name, a['out'], a['ret'])}'>verify</a></td></tr>"
+        f"<td><a href='{google_flights_link(w.origin.name, w.dest.name, a['out'], a['ret'])}'>Google Flights</a>"
+        f" &middot; <a href='{kayak_link(w.origin.name, w.dest.name, a['out'], a['ret'])}'>Kayak</a></td></tr>"
         for a in alerts)
     foot = (f"Cheapest tracked weekend right now: <b>${cheapest['price']:.0f}</b> "
             f"({cheapest['out']} → {cheapest['ret']}, {cheapest['airline']})" if cheapest else "")
@@ -361,7 +374,8 @@ def process_watch(conn, w: Watch):
     md_rows = "".join(
         f"| {a['out']} → {a['ret']} | ${a['price']:.0f} | {a['airline']} | "
         f"{'; '.join(a['reasons'])} | "
-        f"[verify]({kayak_link(w.origin.name, w.dest.name, a['out'], a['ret'])}) |\n"
+        f"[Google Flights]({google_flights_link(w.origin.name, w.dest.name, a['out'], a['ret'])})"
+        f" · [Kayak]({kayak_link(w.origin.name, w.dest.name, a['out'], a['ret'])}) |\n"
         for a in alerts)
     md_foot = (f"\nCheapest tracked weekend right now: **${cheapest['price']:.0f}** "
                f"({cheapest['out']} → {cheapest['ret']}, {cheapest['airline']})\n"
