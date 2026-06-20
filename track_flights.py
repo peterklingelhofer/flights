@@ -90,6 +90,7 @@ RETRIES = 3
 TOP_N = 2
 
 SEND_DIGEST_EVEN_IF_NO_ALERTS = False
+TOP_CHEAPEST = int(os.environ.get("TOP_CHEAPEST") or 5)   # how many cheapest weekends to list
 DB_PATH = os.environ.get("DB_PATH") or "prices.db"
 TODAY = dt.date.today().isoformat()
 
@@ -354,18 +355,34 @@ def process_watch(conn, w: Watch):
         print(f"   no alerts for {w.code} today"); return
 
     alerts.sort(key=lambda a: a["price"])
+    # The N cheapest upcoming weekends right now, regardless of whether they moved.
+    cheapest_n = sorted(snapshot, key=lambda r: r["price"])[:TOP_CHEAPEST]
+
+    def book_html(r):
+        return (f"<a href='{google_flights_link(w.origin.name, w.dest.name, r['out'], r['ret'])}'>Google Flights</a>"
+                f" &middot; <a href='{kayak_link(w.origin.name, w.dest.name, r['out'], r['ret'])}'>Kayak</a>")
+
+    def book_md(r):
+        return (f"[Google Flights]({google_flights_link(w.origin.name, w.dest.name, r['out'], r['ret'])})"
+                f" · [Kayak]({kayak_link(w.origin.name, w.dest.name, r['out'], r['ret'])})")
+
     rows_html = "".join(
         f"<tr><td>{a['out']} → {a['ret']}</td><td align='right'><b>${a['price']:.0f}</b></td>"
         f"<td>{a['airline']}</td><td>{'; '.join(a['reasons'])}</td>"
-        f"<td><a href='{google_flights_link(w.origin.name, w.dest.name, a['out'], a['ret'])}'>Google Flights</a>"
-        f" &middot; <a href='{kayak_link(w.origin.name, w.dest.name, a['out'], a['ret'])}'>Kayak</a></td></tr>"
+        f"<td>{book_html(a)}</td></tr>"
         for a in alerts)
-    foot = (f"Cheapest tracked weekend right now: <b>${cheapest['price']:.0f}</b> "
-            f"({cheapest['out']} → {cheapest['ret']}, {cheapest['airline']})" if cheapest else "")
+    cheap_html = "".join(
+        f"<tr><td>{c['out']} → {c['ret']}</td><td align='right'><b>${c['price']:.0f}</b></td>"
+        f"<td>{c['airline']}</td><td>{book_html(c)}</td></tr>"
+        for c in cheapest_n)
     html = (f"<p>{len(alerts)} nonstop <b>{w.name}</b> weekend(s) moved:</p>"
             f"<table border='1' cellpadding='6' cellspacing='0'>"
             f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Why</th><th>Book</th></tr>"
-            f"{rows_html}</table><p>{foot}</p>"
+            f"{rows_html}</table>"
+            f"<p><b>{len(cheapest_n)} cheapest upcoming weekends right now:</b></p>"
+            f"<table border='1' cellpadding='6' cellspacing='0'>"
+            f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Book</th></tr>"
+            f"{cheap_html}</table>"
             f"<p style='color:#888'>Scraped estimates — confirm on the booking site before buying.</p>")
     subj = (f"✈️ {w.name}: {len(alerts)} weekend deal(s)"
             + (f" — cheapest ${cheapest['price']:.0f}" if cheapest else ""))
@@ -373,17 +390,19 @@ def process_watch(conn, w: Watch):
     # Markdown variant for the GitHub Issue notifier (GitHub renders tables).
     md_rows = "".join(
         f"| {a['out']} → {a['ret']} | ${a['price']:.0f} | {a['airline']} | "
-        f"{'; '.join(a['reasons'])} | "
-        f"[Google Flights]({google_flights_link(w.origin.name, w.dest.name, a['out'], a['ret'])})"
-        f" · [Kayak]({kayak_link(w.origin.name, w.dest.name, a['out'], a['ret'])}) |\n"
+        f"{'; '.join(a['reasons'])} | {book_md(a)} |\n"
         for a in alerts)
-    md_foot = (f"\nCheapest tracked weekend right now: **${cheapest['price']:.0f}** "
-               f"({cheapest['out']} → {cheapest['ret']}, {cheapest['airline']})\n"
-               if cheapest else "")
+    cheap_md = "".join(
+        f"| {c['out']} → {c['ret']} | ${c['price']:.0f} | {c['airline']} | {book_md(c)} |\n"
+        for c in cheapest_n)
     body_md = (f"{len(alerts)} nonstop **{w.name}** weekend(s) moved:\n\n"
                "| Dates | Price | Airline | Why | Book |\n"
                "|---|---|---|---|---|\n"
-               f"{md_rows}{md_foot}\n"
+               f"{md_rows}\n"
+               f"**{len(cheapest_n)} cheapest upcoming weekends right now:**\n\n"
+               "| Dates | Price | Airline | Book |\n"
+               "|---|---|---|---|\n"
+               f"{cheap_md}\n"
                "_Scraped estimates — confirm on the booking site before buying._")
 
     send_email(subj, html, w.recipients)
