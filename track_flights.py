@@ -177,7 +177,44 @@ def db() -> sqlite3.Connection:
         )""")
     conn.execute("""CREATE INDEX IF NOT EXISTS idx_route_pair
                     ON observations(origin, dest, out_date, ret_date, observed_date)""")
+    # One row per route per day we actually alerted — enforces the 1/day cap even
+    # if the workflow runs more than once (cron + manual). Lives in committed prices.db.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS alerts_sent (
+            origin TEXT, dest TEXT, alert_date TEXT,
+            PRIMARY KEY (origin, dest, alert_date)
+        )""")
     return conn
+
+
+def already_alerted_today(conn, o, d) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM alerts_sent WHERE origin=? AND dest=? AND alert_date=?",
+        (o, d, TODAY)).fetchone() is not None
+
+
+def mark_alerted_today(conn, o, d) -> None:
+    conn.execute("INSERT OR IGNORE INTO alerts_sent VALUES (?,?,?)", (o, d, TODAY))
+    conn.commit()
+
+
+def previous_leaderboard(conn, o, d, n) -> dict:
+    """The prior run's N cheapest weekends as {(out,ret): price}.
+
+    Uses the most recent price recorded *before today* for each date-pair, then
+    keeps the N cheapest. Empty on the very first run (so everything reads as new).
+    """
+    rows = conn.execute(
+        """SELECT out_date, ret_date, price FROM (
+               SELECT out_date, ret_date, price,
+                      ROW_NUMBER() OVER (PARTITION BY out_date, ret_date
+                                         ORDER BY observed_at DESC) AS rn
+               FROM observations
+               WHERE origin=? AND dest=? AND observed_date<?
+           ) WHERE rn=1
+           ORDER BY price ASC LIMIT ?""",
+        (o, d, TODAY, n)).fetchall()
+    return {(r[0], r[1]): r[2] for r in rows}
 
 
 def record(conn, o, d, out_date, ret_date, info):
@@ -351,12 +388,26 @@ def process_watch(conn, w: Watch):
 
     write_snapshot(w, snapshot)
     cheapest = min(snapshot, key=lambda r: r["price"]) if snapshot else None
-    if not alerts and not SEND_DIGEST_EVEN_IF_NO_ALERTS:
-        print(f"   no alerts for {w.code} today"); return
 
-    alerts.sort(key=lambda a: a["price"])
     # The N cheapest upcoming weekends right now, regardless of whether they moved.
     cheapest_n = sorted(snapshot, key=lambda r: r["price"])[:TOP_CHEAPEST]
+
+    # Leaderboard change detection vs the prior run: new entrants or price moves.
+    prev_board = previous_leaderboard(conn, w.origin.name, w.dest.name, TOP_CHEAPEST)
+    board_new = [c for c in cheapest_n if (c["out"], c["ret"]) not in prev_board]
+    board_moved = [c for c in cheapest_n
+                   if (c["out"], c["ret"]) in prev_board
+                   and prev_board[(c["out"], c["ret"])] != c["price"]]
+    leaderboard_changed = bool(board_new or board_moved)
+
+    if not (alerts or leaderboard_changed or SEND_DIGEST_EVEN_IF_NO_ALERTS):
+        print(f"   no alerts for {w.code} today"); return
+
+    # Hard cap: at most one alert per route per day, even across multiple runs.
+    if already_alerted_today(conn, w.origin.name, w.dest.name):
+        print(f"   already alerted for {w.code} today — skipping (1/day cap)"); return
+
+    alerts.sort(key=lambda a: a["price"])
 
     def book_html(r):
         return (f"<a href='{google_flights_link(w.origin.name, w.dest.name, r['out'], r['ret'])}'>Google Flights</a>"
@@ -366,48 +417,82 @@ def process_watch(conn, w: Watch):
         return (f"[Google Flights]({google_flights_link(w.origin.name, w.dest.name, r['out'], r['ret'])})"
                 f" · [Kayak]({kayak_link(w.origin.name, w.dest.name, r['out'], r['ret'])})")
 
-    rows_html = "".join(
-        f"<tr><td>{a['out']} → {a['ret']}</td><td align='right'><b>${a['price']:.0f}</b></td>"
-        f"<td>{a['airline']}</td><td>{'; '.join(a['reasons'])}</td>"
-        f"<td>{book_html(a)}</td></tr>"
-        for a in alerts)
+    def board_change(r):
+        key = (r["out"], r["ret"])
+        if key not in prev_board:
+            return "🆕 new"
+        old = prev_board[key]
+        if old == r["price"]:
+            return "—"
+        arrow = "▼" if r["price"] < old else "▲"
+        return f"{arrow} ${old:.0f}→${r['price']:.0f}"
+
+    board_note = ""
+    if leaderboard_changed:
+        parts = []
+        if board_new:
+            parts.append(f"{len(board_new)} new entrant(s)")
+        if board_moved:
+            parts.append(f"{len(board_moved)} price change(s)")
+        board_note = "Leaderboard update: " + ", ".join(parts)
+
     cheap_html = "".join(
         f"<tr><td>{c['out']} → {c['ret']}</td><td align='right'><b>${c['price']:.0f}</b></td>"
-        f"<td>{c['airline']}</td><td>{book_html(c)}</td></tr>"
+        f"<td>{c['airline']}</td><td>{board_change(c)}</td><td>{book_html(c)}</td></tr>"
         for c in cheapest_n)
-    html = (f"<p>{len(alerts)} nonstop <b>{w.name}</b> weekend(s) moved:</p>"
+    moved_html = ""
+    if alerts:
+        rows_html = "".join(
+            f"<tr><td>{a['out']} → {a['ret']}</td><td align='right'><b>${a['price']:.0f}</b></td>"
+            f"<td>{a['airline']}</td><td>{'; '.join(a['reasons'])}</td>"
+            f"<td>{book_html(a)}</td></tr>"
+            for a in alerts)
+        moved_html = (f"<p>{len(alerts)} nonstop <b>{w.name}</b> weekend(s) moved:</p>"
+                      f"<table border='1' cellpadding='6' cellspacing='0'>"
+                      f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Why</th><th>Book</th></tr>"
+                      f"{rows_html}</table>")
+    html = (moved_html
+            + (f"<p><b>{board_note}</b></p>" if board_note else "")
+            + f"<p><b>{len(cheapest_n)} cheapest upcoming weekends right now:</b></p>"
             f"<table border='1' cellpadding='6' cellspacing='0'>"
-            f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Why</th><th>Book</th></tr>"
-            f"{rows_html}</table>"
-            f"<p><b>{len(cheapest_n)} cheapest upcoming weekends right now:</b></p>"
-            f"<table border='1' cellpadding='6' cellspacing='0'>"
-            f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Book</th></tr>"
+            f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Change</th><th>Book</th></tr>"
             f"{cheap_html}</table>"
             f"<p style='color:#888'>Scraped estimates — confirm on the booking site before buying.</p>")
-    subj = (f"✈️ {w.name}: {len(alerts)} weekend deal(s)"
-            + (f" — cheapest ${cheapest['price']:.0f}" if cheapest else ""))
+
+    if alerts:
+        subj = (f"✈️ {w.name}: {len(alerts)} weekend deal(s)"
+                + (f" — cheapest ${cheapest['price']:.0f}" if cheapest else ""))
+    else:
+        subj = (f"✈️ {w.name}: leaderboard update"
+                + (f" — cheapest ${cheapest['price']:.0f}" if cheapest else ""))
 
     # Markdown variant for the GitHub Issue notifier (GitHub renders tables).
-    md_rows = "".join(
-        f"| {a['out']} → {a['ret']} | ${a['price']:.0f} | {a['airline']} | "
-        f"{'; '.join(a['reasons'])} | {book_md(a)} |\n"
-        for a in alerts)
     cheap_md = "".join(
-        f"| {c['out']} → {c['ret']} | ${c['price']:.0f} | {c['airline']} | {book_md(c)} |\n"
+        f"| {c['out']} → {c['ret']} | ${c['price']:.0f} | {c['airline']} | "
+        f"{board_change(c)} | {book_md(c)} |\n"
         for c in cheapest_n)
-    body_md = (f"{len(alerts)} nonstop **{w.name}** weekend(s) moved:\n\n"
-               "| Dates | Price | Airline | Why | Book |\n"
+    moved_md = ""
+    if alerts:
+        md_rows = "".join(
+            f"| {a['out']} → {a['ret']} | ${a['price']:.0f} | {a['airline']} | "
+            f"{'; '.join(a['reasons'])} | {book_md(a)} |\n"
+            for a in alerts)
+        moved_md = (f"{len(alerts)} nonstop **{w.name}** weekend(s) moved:\n\n"
+                    "| Dates | Price | Airline | Why | Book |\n"
+                    "|---|---|---|---|---|\n"
+                    f"{md_rows}\n")
+    body_md = (moved_md
+               + (f"**{board_note}**\n\n" if board_note else "")
+               + f"**{len(cheapest_n)} cheapest upcoming weekends right now:**\n\n"
+               "| Dates | Price | Airline | Change | Book |\n"
                "|---|---|---|---|---|\n"
-               f"{md_rows}\n"
-               f"**{len(cheapest_n)} cheapest upcoming weekends right now:**\n\n"
-               "| Dates | Price | Airline | Book |\n"
-               "|---|---|---|---|\n"
                f"{cheap_md}\n"
                "_Scraped estimates — confirm on the booking site before buying._")
 
     send_email(subj, html, w.recipients)
     send_telegram(subj)
     create_github_issue(subj, body_md)
+    mark_alerted_today(conn, w.origin.name, w.dest.name)
 
 
 def main():
