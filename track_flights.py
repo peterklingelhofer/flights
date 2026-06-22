@@ -80,7 +80,7 @@ DEFAULT_RET_WEEKDAYS = {6, 0}        # Sun, Mon
 DEFAULT_MIN_NIGHTS = 2
 DEFAULT_MAX_NIGHTS = 4
 
-DEFAULT_ABS_THRESHOLD = float(os.environ.get("ABS_THRESHOLD") or 250)
+DEFAULT_ABS_THRESHOLD = float(os.environ.get("ABS_THRESHOLD") or 280)
 PCT_DROP = float(os.environ.get("PCT_DROP") or 0.20)
 HORIZON_DAYS = int(os.environ.get("HORIZON_DAYS") or 330)
 
@@ -90,7 +90,7 @@ RETRIES = 3
 TOP_N = 2
 
 SEND_DIGEST_EVEN_IF_NO_ALERTS = False
-TOP_CHEAPEST = int(os.environ.get("TOP_CHEAPEST") or 5)   # how many cheapest weekends to list
+TOP_CHEAPEST = int(os.environ.get("TOP_CHEAPEST") or 10)   # how many cheapest weekends to list
 DB_PATH = os.environ.get("DB_PATH") or "prices.db"
 TODAY = dt.date.today().isoformat()
 
