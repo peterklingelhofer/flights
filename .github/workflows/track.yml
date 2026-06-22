@@ -22,6 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Carbon-aware dispatcher in report-only mode: measures the grid and reports
+      # in the job summary what it *would* defer, plus a CO2 estimate. dry_run keeps
+      # grid_clean=true so it never blocks this (tiny, daily) job. Read would_defer
+      # in the summary to see the real verdict. Flip dry_run to 'false' to enforce.
+      - uses: peterklingelhofer/carbon-aware-dispatcher@v1
+        id: carbon
+        with:
+          grid_zones: 'auto:green'
+          max_carbon_intensity: '250'
+          dry_run: 'true'
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -47,6 +58,7 @@ jobs:
           ABS_THRESHOLD: ${{ vars.ABS_THRESHOLD }}
           HORIZON_DAYS: ${{ vars.HORIZON_DAYS }}
           PCT_DROP: ${{ vars.PCT_DROP }}
+          TOP_CHEAPEST: ${{ vars.TOP_CHEAPEST }}
         run: python track_flights.py
 
       - name: Commit price history
