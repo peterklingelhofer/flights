@@ -87,10 +87,18 @@ HORIZON_DAYS = int(os.environ.get("HORIZON_DAYS") or 330)
 # Politeness / reliability when hitting Google (doubles in volume per extra route).
 DELAY_MIN, DELAY_MAX = 2.0, 4.5
 RETRIES = 3
-TOP_N = 2
+TOP_N = 6                     # parse enough results per search to find the fair-cheapest airline
 
 SEND_DIGEST_EVEN_IF_NO_ALERTS = False
-TOP_CHEAPEST = int(os.environ.get("TOP_CHEAPEST") or 10)   # how many cheapest weekends to list
+TOP_CHEAPEST = int(os.environ.get("TOP_CHEAPEST") or 25)   # how many cheapest weekends to list
+
+# Frontier sells an unbundled fare: seat selection, carry-on, and checked bag are
+# all extra and charged per one-way flight (so twice for a round trip). We add them
+# so Frontier's total is comparable to carriers that bundle these in. Tunable via env.
+FRONTIER_SEAT_FEE    = float(os.environ.get("FRONTIER_SEAT_FEE")    or 24)
+FRONTIER_CARRYON_FEE = float(os.environ.get("FRONTIER_CARRYON_FEE") or 61)
+FRONTIER_BAG_FEE     = float(os.environ.get("FRONTIER_BAG_FEE")     or 69)
+
 DB_PATH = os.environ.get("DB_PATH") or "prices.db"
 TODAY = dt.date.today().isoformat()
 
@@ -152,10 +160,13 @@ def cheapest_roundtrip(origin: Airport, dest: Airport,
                 airline = legs[0].primary_airline_name
                 if airline is None and legs[0].legs:
                     airline = legs[0].legs[0].airline.value
-                if best is None or total < best["price"]:
+                airline = airline or "?"
+                # Pick the cheapest by FAIR price, so a deceptively cheap Frontier
+                # fare doesn't outrank an actually-cheaper bundled carrier.
+                if best is None or fair_price(float(total), airline) < fair_price(best["price"], best["airline"]):
                     best = {"price": float(total),
                             "currency": legs[-1].currency or "USD",
-                            "airline": airline or "?"}
+                            "airline": airline}
             return best
         except Exception as e:
             last_err = e
@@ -199,22 +210,23 @@ def mark_alerted_today(conn, o, d) -> None:
 
 
 def previous_leaderboard(conn, o, d, n) -> dict:
-    """The prior run's N cheapest weekends as {(out,ret): price}.
+    """The prior run's N cheapest weekends as {(out,ret): fair_price}.
 
-    Uses the most recent price recorded *before today* for each date-pair, then
-    keeps the N cheapest. Empty on the very first run (so everything reads as new).
+    Uses the most recent fare recorded *before today* for each date-pair, ranks by
+    fair price, keeps the N cheapest. Empty on the first run (everything reads new).
     """
     rows = conn.execute(
-        """SELECT out_date, ret_date, price FROM (
-               SELECT out_date, ret_date, price,
+        """SELECT out_date, ret_date, price, airline FROM (
+               SELECT out_date, ret_date, price, airline,
                       ROW_NUMBER() OVER (PARTITION BY out_date, ret_date
                                          ORDER BY observed_at DESC) AS rn
                FROM observations
                WHERE origin=? AND dest=? AND observed_date<?
-           ) WHERE rn=1
-           ORDER BY price ASC LIMIT ?""",
-        (o, d, TODAY, n)).fetchall()
-    return {(r[0], r[1]): r[2] for r in rows}
+           ) WHERE rn=1""",
+        (o, d, TODAY)).fetchall()
+    ranked = sorted(((r[0], r[1], fair_price(r[2], r[3])) for r in rows),
+                    key=lambda x: x[2])[:n]
+    return {(r[0], r[1]): r[2] for r in ranked}
 
 
 def record(conn, o, d, out_date, ret_date, info):
@@ -225,17 +237,21 @@ def record(conn, o, d, out_date, ret_date, info):
 
 
 def prior_stats(conn, o, d, out_date, ret_date):
-    """(all-time min before today, most recent price before today) for THIS route+pair."""
-    pmin = conn.execute(
-        """SELECT MIN(price) FROM observations
-           WHERE origin=? AND dest=? AND out_date=? AND ret_date=? AND observed_date<?""",
-        (o, d, out_date, ret_date, TODAY)).fetchone()[0]
-    row = conn.execute(
-        """SELECT price FROM observations
+    """(fair all-time min, fair most-recent price) before today, for THIS route+pair.
+
+    Computed on fair price (raw fare + airline fees) so thresholds and new-low
+    detection reflect the real all-in cost, not a deceptive headline fare.
+    """
+    rows = conn.execute(
+        """SELECT price, airline FROM observations
            WHERE origin=? AND dest=? AND out_date=? AND ret_date=? AND observed_date<?
-           ORDER BY observed_at DESC LIMIT 1""",
-        (o, d, out_date, ret_date, TODAY)).fetchone()
-    return pmin, (row[0] if row else None)
+           ORDER BY observed_at DESC""",
+        (o, d, out_date, ret_date, TODAY)).fetchall()
+    if not rows:
+        return None, None
+    pmin = min(fair_price(r[0], r[1]) for r in rows)
+    plast = fair_price(rows[0][0], rows[0][1])      # rows ordered newest-first
+    return pmin, plast
 
 
 # =========================================================================== #
@@ -255,6 +271,31 @@ def google_flights_link(o, d, out_date, ret_date):
     q = (f"Flights from {o} to {d} on {out_date} returning {ret_date} nonstop "
          f"round trip")
     return f"https://www.google.com/travel/flights?q={quote(q)}"
+
+
+def airline_addon(airline) -> float:
+    """Per-round-trip fees to add for a fair cross-airline comparison.
+
+    Frontier's headline fare excludes seat selection, carry-on, and checked bag;
+    each is charged per one-way flight, so a round trip incurs them twice.
+    """
+    if airline and "frontier" in airline.lower():
+        return 2 * (FRONTIER_SEAT_FEE + FRONTIER_CARRYON_FEE + FRONTIER_BAG_FEE)
+    return 0.0
+
+
+def fair_price(price, airline) -> float:
+    return price + airline_addon(airline)
+
+
+def fare_breakdown(price, airline) -> str:
+    """Parenthetical showing how a Frontier total was built, so a traveler who
+    skips the carry-on and/or bag can re-derive their own number. Empty for others.
+    """
+    if airline_addon(airline) <= 0:
+        return ""
+    return (f" (${price:.0f} fare + 2×(${FRONTIER_SEAT_FEE:.0f} seat "
+            f"+ ${FRONTIER_CARRYON_FEE:.0f} carry-on + ${FRONTIER_BAG_FEE:.0f} bag))")
 
 
 def evaluate(price, pmin, plast, threshold):
@@ -343,15 +384,19 @@ def create_github_issue(subject: str, body_md: str) -> None:
 # Per-route snapshot (committed each run; browse/chart later)
 # =========================================================================== #
 def write_snapshot(w: Watch, rows):
-    rows = sorted([r for r in rows if r["price"] is not None], key=lambda r: r["price"])
+    rows = sorted([r for r in rows if r["price"] is not None],
+                  key=lambda r: fair_price(r["price"], r["airline"]))
     lines = [f"# Cheapest nonstop {w.origin.name} → {w.dest.name} round-trips  ({w.name})",
-             f"_Updated {dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC_\n",
-             "| Out | Return | Nights | Price | Airline |",
+             f"_Updated {dt.datetime.utcnow():%Y-%m-%d %H:%M} UTC. Fair price adds Frontier's "
+             f"seat/carry-on/bag fees so totals are comparable._\n",
+             "| Out | Return | Nights | Fair price | Airline |",
              "|-----|--------|:------:|------:|---------|"]
     for i, r in enumerate(rows):
         n = (dt.date.fromisoformat(r["ret"]) - dt.date.fromisoformat(r["out"])).days
         mark = " 🏆" if i == 0 else ""
-        lines.append(f"| {r['out']} | {r['ret']} | {n} | ${r['price']:.0f}{mark} | {r['airline']} |")
+        fp = fair_price(r["price"], r["airline"])
+        lines.append(f"| {r['out']} | {r['ret']} | {n} | "
+                     f"${fp:.0f}{mark}{fare_breakdown(r['price'], r['airline'])} | {r['airline']} |")
     with open(f"snapshot_{w.code}.md", "w") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -373,31 +418,33 @@ def process_watch(conn, w: Watch):
             time.sleep(random.uniform(DELAY_MIN, DELAY_MAX)); continue
 
         price = info["price"]
+        fp = fair_price(price, info["airline"])
         pmin, plast = prior_stats(conn, w.origin.name, w.dest.name, out_date, ret_date)
         record(conn, w.origin.name, w.dest.name, out_date, ret_date, info)
         conn.commit()
-        snapshot.append({"out": out_date, "ret": ret_date, "price": price, "airline": info["airline"]})
+        snapshot.append({"out": out_date, "ret": ret_date, "price": price,
+                         "airline": info["airline"], "fair": fp})
 
-        reasons = evaluate(price, pmin, plast, threshold)
-        print(f"[{idx}/{len(pairs)}] {out_date}->{ret_date}: ${price:.0f} ({info['airline']})"
+        reasons = evaluate(fp, pmin, plast, threshold)
+        print(f"[{idx}/{len(pairs)}] {out_date}->{ret_date}: ${fp:.0f} ({info['airline']})"
               + ("  <<< " + "; ".join(reasons) if reasons else ""))
         if reasons:
             alerts.append({"out": out_date, "ret": ret_date, "price": price,
-                           "airline": info["airline"], "reasons": reasons})
+                           "airline": info["airline"], "fair": fp, "reasons": reasons})
         time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
 
     write_snapshot(w, snapshot)
-    cheapest = min(snapshot, key=lambda r: r["price"]) if snapshot else None
+    cheapest = min(snapshot, key=lambda r: r["fair"]) if snapshot else None
 
-    # The N cheapest upcoming weekends right now, regardless of whether they moved.
-    cheapest_n = sorted(snapshot, key=lambda r: r["price"])[:TOP_CHEAPEST]
+    # The N cheapest upcoming weekends right now (by fair price), moved or not.
+    cheapest_n = sorted(snapshot, key=lambda r: r["fair"])[:TOP_CHEAPEST]
 
-    # Leaderboard change detection vs the prior run: new entrants or price moves.
+    # Leaderboard change detection vs the prior run: new entrants or fair-price moves.
     prev_board = previous_leaderboard(conn, w.origin.name, w.dest.name, TOP_CHEAPEST)
     board_new = [c for c in cheapest_n if (c["out"], c["ret"]) not in prev_board]
     board_moved = [c for c in cheapest_n
                    if (c["out"], c["ret"]) in prev_board
-                   and prev_board[(c["out"], c["ret"])] != c["price"]]
+                   and prev_board[(c["out"], c["ret"])] != c["fair"]]
     leaderboard_changed = bool(board_new or board_moved)
 
     if not (alerts or leaderboard_changed or SEND_DIGEST_EVEN_IF_NO_ALERTS):
@@ -422,10 +469,10 @@ def process_watch(conn, w: Watch):
         if key not in prev_board:
             return "🆕 new"
         old = prev_board[key]
-        if old == r["price"]:
+        if old == r["fair"]:
             return "—"
-        arrow = "▼" if r["price"] < old else "▲"
-        return f"{arrow} ${old:.0f}→${r['price']:.0f}"
+        arrow = "▼" if r["fair"] < old else "▲"
+        return f"{arrow} ${old:.0f}→${r['fair']:.0f}"
 
     board_note = ""
     if leaderboard_changed:
@@ -437,57 +484,61 @@ def process_watch(conn, w: Watch):
         board_note = "Leaderboard update: " + ", ".join(parts)
 
     cheap_html = "".join(
-        f"<tr><td>{c['out']} → {c['ret']}</td><td align='right'><b>${c['price']:.0f}</b></td>"
+        f"<tr><td>{c['out']} → {c['ret']}</td>"
+        f"<td align='right'><b>${c['fair']:.0f}</b>{fare_breakdown(c['price'], c['airline'])}</td>"
         f"<td>{c['airline']}</td><td>{board_change(c)}</td><td>{book_html(c)}</td></tr>"
         for c in cheapest_n)
     moved_html = ""
     if alerts:
         rows_html = "".join(
-            f"<tr><td>{a['out']} → {a['ret']}</td><td align='right'><b>${a['price']:.0f}</b></td>"
+            f"<tr><td>{a['out']} → {a['ret']}</td>"
+            f"<td align='right'><b>${a['fair']:.0f}</b>{fare_breakdown(a['price'], a['airline'])}</td>"
             f"<td>{a['airline']}</td><td>{'; '.join(a['reasons'])}</td>"
             f"<td>{book_html(a)}</td></tr>"
             for a in alerts)
         moved_html = (f"<p>{len(alerts)} nonstop <b>{w.name}</b> weekend(s) moved:</p>"
                       f"<table border='1' cellpadding='6' cellspacing='0'>"
-                      f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Why</th><th>Book</th></tr>"
+                      f"<tr><th>Dates</th><th>Fair price</th><th>Airline</th><th>Why</th><th>Book</th></tr>"
                       f"{rows_html}</table>")
     html = (moved_html
             + (f"<p><b>{board_note}</b></p>" if board_note else "")
-            + f"<p><b>{len(cheapest_n)} cheapest upcoming weekends right now:</b></p>"
+            + f"<p><b>{len(cheapest_n)} cheapest upcoming weekends right now (fair price):</b></p>"
             f"<table border='1' cellpadding='6' cellspacing='0'>"
-            f"<tr><th>Dates</th><th>Price</th><th>Airline</th><th>Change</th><th>Book</th></tr>"
+            f"<tr><th>Dates</th><th>Fair price</th><th>Airline</th><th>Change</th><th>Book</th></tr>"
             f"{cheap_html}</table>"
-            f"<p style='color:#888'>Scraped estimates — confirm on the booking site before buying.</p>")
+            f"<p style='color:#888'>Fair price adds Frontier's seat/carry-on/bag fees so totals are comparable. "
+            f"Scraped estimates — confirm on the booking site before buying.</p>")
 
     if alerts:
         subj = (f"✈️ {w.name}: {len(alerts)} weekend deal(s)"
-                + (f" — cheapest ${cheapest['price']:.0f}" if cheapest else ""))
+                + (f" — cheapest ${cheapest['fair']:.0f}" if cheapest else ""))
     else:
         subj = (f"✈️ {w.name}: leaderboard update"
-                + (f" — cheapest ${cheapest['price']:.0f}" if cheapest else ""))
+                + (f" — cheapest ${cheapest['fair']:.0f}" if cheapest else ""))
 
     # Markdown variant for the GitHub Issue notifier (GitHub renders tables).
     cheap_md = "".join(
-        f"| {c['out']} → {c['ret']} | ${c['price']:.0f} | {c['airline']} | "
-        f"{board_change(c)} | {book_md(c)} |\n"
+        f"| {c['out']} → {c['ret']} | ${c['fair']:.0f}{fare_breakdown(c['price'], c['airline'])} "
+        f"| {c['airline']} | {board_change(c)} | {book_md(c)} |\n"
         for c in cheapest_n)
     moved_md = ""
     if alerts:
         md_rows = "".join(
-            f"| {a['out']} → {a['ret']} | ${a['price']:.0f} | {a['airline']} | "
-            f"{'; '.join(a['reasons'])} | {book_md(a)} |\n"
+            f"| {a['out']} → {a['ret']} | ${a['fair']:.0f}{fare_breakdown(a['price'], a['airline'])} "
+            f"| {a['airline']} | {'; '.join(a['reasons'])} | {book_md(a)} |\n"
             for a in alerts)
         moved_md = (f"{len(alerts)} nonstop **{w.name}** weekend(s) moved:\n\n"
-                    "| Dates | Price | Airline | Why | Book |\n"
+                    "| Dates | Fair price | Airline | Why | Book |\n"
                     "|---|---|---|---|---|\n"
                     f"{md_rows}\n")
     body_md = (moved_md
                + (f"**{board_note}**\n\n" if board_note else "")
-               + f"**{len(cheapest_n)} cheapest upcoming weekends right now:**\n\n"
-               "| Dates | Price | Airline | Change | Book |\n"
+               + f"**{len(cheapest_n)} cheapest upcoming weekends right now (fair price):**\n\n"
+               "| Dates | Fair price | Airline | Change | Book |\n"
                "|---|---|---|---|---|\n"
                f"{cheap_md}\n"
-               "_Scraped estimates — confirm on the booking site before buying._")
+               "_Fair price adds Frontier's seat/carry-on/bag fees so totals are comparable. "
+               "Scraped estimates — confirm on the booking site before buying._")
 
     send_email(subj, html, w.recipients)
     send_telegram(subj)
