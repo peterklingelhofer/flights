@@ -1,5 +1,5 @@
 # Cheapest nonstop MSY → PHL round-trips  (New Orleans → Philadelphia)
-_Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees so totals are comparable._
+_Updated 2026-07-06 16:56 UTC. Fair price adds Frontier's seat/carry-on/bag fees so totals are comparable._
 
 | Out | Return | Nights | Fair price | Airline |
 |-----|--------|:------:|------:|---------|
@@ -22,7 +22,6 @@ _Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees
 | 2026-09-03 | 2026-09-06 | 3 | $513 | American |
 | 2026-09-03 | 2026-09-07 | 4 | $513 | American |
 | 2026-09-04 | 2026-09-06 | 2 | $513 | American |
-| 2026-09-04 | 2026-09-07 | 3 | $513 | American |
 | 2026-09-10 | 2026-09-13 | 3 | $513 | American |
 | 2026-09-10 | 2026-09-14 | 4 | $513 | American |
 | 2026-09-11 | 2026-09-13 | 2 | $513 | American |
@@ -69,11 +68,9 @@ _Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees
 | 2027-02-05 | 2027-02-08 | 3 | $513 | American |
 | 2027-02-18 | 2027-02-22 | 4 | $513 | American |
 | 2027-02-19 | 2027-02-22 | 3 | $513 | American |
-| 2027-02-25 | 2027-03-01 | 4 | $513 | American |
 | 2027-02-26 | 2027-03-01 | 3 | $513 | American |
 | 2027-03-04 | 2027-03-08 | 4 | $513 | American |
 | 2027-03-11 | 2027-03-15 | 4 | $513 | American |
-| 2027-03-25 | 2027-03-28 | 3 | $513 | American |
 | 2027-04-01 | 2027-04-05 | 4 | $513 | American |
 | 2027-04-08 | 2027-04-12 | 4 | $513 | American |
 | 2027-04-09 | 2027-04-12 | 3 | $513 | American |
@@ -81,7 +78,6 @@ _Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees
 | 2027-04-16 | 2027-04-19 | 3 | $513 | American |
 | 2027-04-22 | 2027-04-26 | 4 | $513 | American |
 | 2027-04-29 | 2027-05-03 | 4 | $513 | American |
-| 2027-05-06 | 2027-05-10 | 4 | $513 | American |
 | 2027-05-07 | 2027-05-10 | 3 | $513 | American |
 | 2027-05-13 | 2027-05-17 | 4 | $513 | American |
 | 2027-05-14 | 2027-05-17 | 3 | $513 | American |
@@ -120,19 +116,20 @@ _Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees
 | 2027-02-18 | 2027-02-21 | 3 | $533 | American |
 | 2027-02-19 | 2027-02-21 | 2 | $533 | American |
 | 2027-02-25 | 2027-02-28 | 3 | $533 | American |
-| 2027-02-26 | 2027-02-28 | 2 | $533 | American |
 | 2027-03-04 | 2027-03-07 | 3 | $533 | American |
 | 2027-03-05 | 2027-03-08 | 3 | $533 | American |
 | 2027-04-01 | 2027-04-04 | 3 | $533 | American |
 | 2027-04-02 | 2027-04-05 | 3 | $533 | American |
 | 2027-04-08 | 2027-04-11 | 3 | $533 | American |
 | 2027-04-09 | 2027-04-11 | 2 | $533 | American |
+| 2027-04-15 | 2027-04-18 | 3 | $533 | American |
 | 2027-04-16 | 2027-04-18 | 2 | $533 | American |
 | 2027-04-22 | 2027-04-25 | 3 | $533 | American |
 | 2027-04-23 | 2027-04-26 | 3 | $533 | American |
-| 2027-04-29 | 2027-05-02 | 3 | $533 | American |
 | 2027-04-30 | 2027-05-03 | 3 | $533 | American |
 | 2027-05-06 | 2027-05-09 | 3 | $533 | American |
+| 2027-05-07 | 2027-05-09 | 2 | $533 | American |
+| 2027-05-13 | 2027-05-16 | 3 | $533 | American |
 | 2027-05-14 | 2027-05-16 | 2 | $533 | American |
 | 2027-05-20 | 2027-05-23 | 3 | $533 | American |
 | 2027-05-21 | 2027-05-23 | 2 | $533 | American |
@@ -144,13 +141,12 @@ _Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees
 | 2026-07-10 | 2026-07-12 | 2 | $553 | American |
 | 2026-07-10 | 2026-07-13 | 3 | $553 | American |
 | 2026-07-16 | 2026-07-19 | 3 | $553 | American |
-| 2026-07-16 | 2026-07-20 | 4 | $553 | American |
 | 2026-07-17 | 2026-07-19 | 2 | $553 | American |
 | 2026-07-17 | 2026-07-20 | 3 | $553 | American |
+| 2026-07-23 | 2026-07-26 | 3 | $553 | American |
 | 2026-07-23 | 2026-07-27 | 4 | $553 | American |
 | 2026-07-24 | 2026-07-26 | 2 | $553 | American |
 | 2026-07-24 | 2026-07-27 | 3 | $553 | American |
-| 2026-07-30 | 2026-08-02 | 3 | $553 | American |
 | 2026-07-30 | 2026-08-03 | 4 | $553 | American |
 | 2026-07-31 | 2026-08-02 | 2 | $553 | American |
 | 2026-07-31 | 2026-08-03 | 3 | $553 | American |
@@ -173,7 +169,6 @@ _Updated 2026-07-05 15:22 UTC. Fair price adds Frontier's seat/carry-on/bag fees
 | 2027-03-18 | 2027-03-21 | 3 | $563 | American |
 | 2027-03-25 | 2027-03-29 | 4 | $563 | American |
 | 2027-05-27 | 2027-05-31 | 4 | $563 | American |
-| 2027-05-28 | 2027-05-30 | 2 | $563 | American |
 | 2027-03-19 | 2027-03-22 | 3 | $573 | American |
 | 2027-05-28 | 2027-05-31 | 3 | $573 | American |
 | 2027-03-12 | 2027-03-14 | 2 | $593 | American |
